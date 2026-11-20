@@ -7,3 +7,5 @@ wandb
 scikit-learn
 pandas
 pillow
+transformers>=4.57
+accelerate
