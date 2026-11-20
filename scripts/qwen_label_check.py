@@ -20,9 +20,9 @@ MAX_SIDE = 768  # downscale images to limit memory and time
 
 CLASS_DESCRIPTIONS = {
     "Painting": "a painted artwork (on canvas, panel, paper, or a wall fresco)",
-    "Buildings": "architecture: the exterior or interior of a building or site, only photo of the building, not a painting or model of it."
+    "Buildings": "architecture: the exterior or interior of a building or site, only photo of the real building, not a painting or model of it."
                  " (church, mosque, temple, tomb, villa, ruins, necropolis)",
-    "Instruments": "an instrument, e.g. a musical or scientific instrument, a church organ",
+    "Instruments": "an instrument, e.g. a musical or scientific instrument, a church organ, if the instrument is the main subject of the image",
     "Clothing": "a garment or item of clothing (dress, coat, cloak, tunic, suit, underwear), worn or displayed",
     "Medals": "a medal or medallion (either side)",
     "Mosaics": "a picture or pattern made of small coloured tiles or stones (tesserae)",
