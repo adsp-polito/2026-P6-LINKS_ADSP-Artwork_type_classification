@@ -15,7 +15,7 @@ MAPPING = Path("data/class_mapping.csv")
 EXCLUDE = Path("data/cleaning/excluded_artefacts_md5.txt")
 OUT_DIR = Path("/kaggle/working")
 MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
-BATCH_SIZE = 16
+BATCH_SIZE = 32
 MAX_SIDE = 768  # downscale images to limit memory and time
 
 CLASS_DESCRIPTIONS = {
@@ -105,13 +105,16 @@ def run(todo, pred_file):
 
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    pred_file = OUT_DIR / "qwen_predictions.csv"
+    classes = sorted(c.strip() for c in os.environ.get("CLASSES", "").split(",") if c.strip())
+    suffix = "_".join(classes) if classes else "all"  # output files are named after the classes of the run
+    pred_file = OUT_DIR / f"qwen_predictions_{suffix}.csv"
+    check_file = OUT_DIR / f"qwen_images_to_check_{suffix}.csv"
+
     images = load_images()
     done = set(pd.read_csv(pred_file)["image"]) if pred_file.exists() else set()
     todo = images[~images["image"].isin(done)]
-    classes = os.environ.get("CLASSES")
     if classes:
-        todo = todo[todo["label"].isin([c.strip() for c in classes.split(",")])]
+        todo = todo[todo["label"].isin(classes)]
     per_class = int(os.environ.get("PER_CLASS", 0))
     if per_class:
         todo = todo.sample(frac=1, random_state=0).groupby("label").head(per_class)
@@ -122,8 +125,8 @@ def main():
     res = pd.read_csv(pred_file)
     print(pd.crosstab(res["label"], res["predicted"]).to_string())
     to_check = res[res["predicted"] != res["label"]].sort_values(["label", "predicted", "image"])
-    to_check.to_csv(OUT_DIR / "qwen_images_to_check.csv", index=False)
-    print(f"{len(to_check)} of {len(res)} images to check, saved to {OUT_DIR / 'qwen_images_to_check.csv'}")
+    to_check.to_csv(check_file, index=False)
+    print(f"{len(to_check)} of {len(res)} images to check, saved to {check_file}")
 
 
 if __name__ == "__main__":
