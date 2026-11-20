@@ -109,7 +109,10 @@ def main():
     images = load_images()
     done = set(pd.read_csv(pred_file)["image"]) if pred_file.exists() else set()
     todo = images[~images["image"].isin(done)]
-    per_class = int(os.environ.get("PER_CLASS", 0))  # e.g. PER_CLASS=7 for a quick test, unset for the full run
+    classes = os.environ.get("CLASSES")
+    if classes:
+        todo = todo[todo["label"].isin([c.strip() for c in classes.split(",")])]
+    per_class = int(os.environ.get("PER_CLASS", 0))
     if per_class:
         todo = todo.sample(frac=1, random_state=0).groupby("label").head(per_class)
     print(f"{len(images)} images, {len(todo)} still to classify")
