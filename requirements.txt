@@ -1,0 +1,9 @@
+torch
+torchvision
+lightning
+jsonargparse[signatures]
+timm
+wandb
+scikit-learn
+pandas
+pillow
