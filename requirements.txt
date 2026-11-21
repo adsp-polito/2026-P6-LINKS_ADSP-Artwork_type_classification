@@ -5,6 +5,7 @@ jsonargparse[signatures]
 timm
 wandb
 scikit-learn
+matplotlib
 pandas
 pillow
 transformers>=4.57
