@@ -1,0 +1,23 @@
+seed_everything: 42
+run_name: resnet50_7classes
+out_dir: runs
+wandb_project: artwork-type-classification
+wandb_entity: ADSP-project
+
+trainer:
+  max_epochs: 20
+  accelerator: gpu
+  devices: 1
+  precision: 16-mixed
+
+model:
+  model_name: resnet50.tv_in1k
+  pretrained: true
+  freeze_backbone: false
+  lr_backbone: 1.0e-4
+  lr_head: 1.0e-3
+data:
+  splits: data/split7.csv
+  data_root: /kaggle/input/datasets/fabiostradiotti/artkb-dataset
+  img_size: 224
+  batch_size: 64
