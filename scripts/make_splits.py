@@ -1,27 +1,22 @@
 """Create stratified train/val/test splits (70 train/10 val/20 test) for artefact classification.
 
-Generates a single CSV file in <out_dir> depending on --version:
-- --version 24 -> split_24.csv: original dataset restricted to the 24 classes in class_mapping.csv
-  (without artefact exclusions and without taxonomy grouping).
-- --version 7  -> split.csv: cleaned dataset applying:
-    1. Exclusion of artefacts listed in .txt files (--exclude-txt).
-    2. Removal of single images predicted as 'Other' from .csv files (--corrections-csv).
-    3. Relabeling of artefacts with unanimous non-'Other' predictions in .csv files, or dropping
-       artefacts with conflicting predictions across their images.
-    4. Stratified split (70/10/20) on type_label, followed by taxonomy grouping according to
-       new_label in class_mapping.csv.
+Pipeline:
+1. Remove duplicate/excluded artefacts listed in .txt files (--exclude-txt).
+2. Stratified split (70/10/20) on the 24 original classes (artefact-level) -> split_24.csv.
+3. Map 24 classes -> 7 classes using class_mapping.csv -> split7.csv.
+4. Remove single images predicted as 'Other' from .csv files (--corrections-csv).
+5. Relabel artefacts with unanimous non-'Other' predictions from .csv files
+   (drop artefacts with conflicting/invalid predictions or 0 remaining images).
+6. Save cleaned 7-class split -> split7_cleaned.csv.
 
-Classes with fewer than 3 artefacts are automatically assigned entirely to the
-'train' split so stratified splitting (70/10/20) succeeds on the remaining classes.
-
-Output contains the columns: images_path,label,split,artefact
+Output columns: images_path,label,split,artefact
 
 usage:
-    python scripts/make_splits.py data/artefacts.csv data/class_mapping.csv --version 24
-    python scripts/make_splits.py data/artefacts.csv data/class_mapping.csv --version 7 \
+    python scripts/make_splits.py data/artefacts.csv data/class_mapping.csv \
         --exclude-txt data/cleaning/excluded_artefacts_md5.txt \
-        --corrections-csv data/cleaning/qwen_images_to_check.csv
+        --corrections-csv data/cleaning/qwen_checked_Buildings.csv data/cleaning/qwen_checked_Painting.csv data/cleaning/qwen_checked_Clothing_Documents_Instruments_Medals_Mosaics.csv 
 """
+
 import argparse
 from pathlib import Path
 
@@ -71,7 +66,7 @@ def remove_other_images(df: pd.DataFrame, corrections_df: pd.DataFrame) -> pd.Da
     if corrections_df.empty:
         return df.copy()
 
-    other_rows = corrections_df[corrections_df["predicted"].str.lower() == "other"]
+    other_rows = corrections_df[corrections_df["predicted"].str.lower() == "other"].copy()
     if other_rows.empty:
         return df.copy()
 
@@ -216,7 +211,7 @@ def expand_and_format(df: pd.DataFrame, label_col: str) -> pd.DataFrame:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate either split_24.csv (--version 24) or split.csv (--version 7) from artefacts.csv"
+        description="Generate split_24.csv, split7.csv, and split7_cleaned.csv from artefacts.csv."
     )
     parser.add_argument(
         "artefacts",
@@ -237,9 +232,9 @@ def main():
     )
     parser.add_argument(
         "--version",
-        choices=["24", "7"],
-        required=True,
-        help="Which split version to generate: '24' (split_24.csv) or '7' (split.csv)",
+        choices=["all", "24", "7", "7_cleaned"],
+        default="all",
+        help="Which split file(s) to save (default: all)",
     )
     parser.add_argument(
         "--exclude-txt",
@@ -287,60 +282,75 @@ def main():
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.version == "24":
+    # Remove duplicates/excluded artefacts listed in .txt files
+    excluded_ids = load_excluded_ids(args.exclude_txt) if args.exclude_txt else set()
+    df_dedup = df[~df["artefact"].isin(excluded_ids)].copy()
+    print(
+        f"[Info] Excluded {len(df) - len(df_dedup)} artefacts using "
+        f"{len(args.exclude_txt)} .txt file(s)"
+    )
+
+
+
+    df_split = stratified_split_artefacts(df_dedup, stratify_col="type_label", seed=args.seed)
+
+    if args.version in ("all", "24"):
         # ---------------------------------------------------------------------
         # Version 1: Original 24 classes, no exclusions, no taxonomy grouping
         # ---------------------------------------------------------------------
-        print("=== Building Version 24: split_24.csv ===")
-        df_v1 = stratified_split_artefacts(df, stratify_col="type_label", seed=args.seed)
-        split_24 = expand_and_format(df_v1, label_col="type_label")
+        split_24 = expand_and_format(df_split, label_col="type_label")
         out_24_path = args.out_dir / "split_24.csv"
         split_24.to_csv(out_24_path, index=False)
 
         print(f"Saved {out_24_path}: {len(split_24)} images across {split_24['label'].nunique()} classes")
         print(split_24["split"].value_counts().to_string())
+        print("\n" + split_24["label"].value_counts().to_string())
+        print("\n" + pd.crosstab(split_24["label"], split_24["split"]).to_string())
 
-    elif args.version == "7":
-        # ---------------------------------------------------------------------
-        # Version 2: Cleaned artefacts + CSV image removal/relabeling -> split -> 7 classes
-        # ---------------------------------------------------------------------
-        print("=== Building Version 7: split.csv ===")
+    # Map 24 classes -> 7 classes and save split7.csv
+    df_split["grouped_label"] = df_split["type_label"].replace(to_new_label)
 
-        # 1. Remove artefacts listed in .txt exclusion files first
-        excluded_ids = load_excluded_ids(args.exclude_txt) if args.exclude_txt else set()
-        df_clean = df[~df["artefact"].isin(excluded_ids)].copy()
-        print(
-            f"[Info] Excluded {len(df) - len(df_clean)} artefacts using "
-            f"{len(args.exclude_txt)} .txt file(s)"
-        )
+    if args.version in ("all", "7"):
+        split_7 = expand_and_format(df_split, label_col="grouped_label")
+        out_7_path = args.out_dir / "split7.csv"
+        split_7.to_csv(out_7_path, index=False)
 
-        # 2. Remove 'Other' images and relabel/drop artefacts directly on 'type_label'
+        print(f"Saved {out_7_path}: {len(split_7)} images across {split_7['label'].nunique()} classes")
+        print(split_7["split"].value_counts().to_string())
+        print("\n" + split_7["label"].value_counts().to_string())
+        print("\n" + pd.crosstab(split_7["label"], split_7["split"]).to_string())
+        print("\n" + (pd.crosstab(split_7["label"], split_7["split"], normalize="index") * 100).round(2).to_string())
+
+    # Remove 'Other' -> Relabel from Qwen CSV -> split7_cleaned.csv
+    if args.version in ("all", "7_cleaned"):
         corrections_df = load_corrections_csv(args.corrections_csv)
-        df_clean = remove_other_images(df_clean, corrections_df)
+
+        df_clean = remove_other_images(df_split, corrections_df)
+
         df_clean = relabel_from_predictions(
             df_clean,
             corrections_df,
-            label_col="type_label",
+            label_col="grouped_label",
             valid_labels=valid_labels,
         )
+        df_clean["grouped_label"] = df_clean["grouped_label"].replace(to_new_label)
 
-        # Drop artefacts that lost all their images after removing 'Other'
+        # Drop artefacts left with 0 images after removing 'Other'
         df_clean = df_clean[df_clean["images_path"].str.strip() != ""].copy()
 
-        # 3. Stratified split on 'type_label' first, then map taxonomy to 7 classes
-        df_v2 = stratified_split_artefacts(
-            df_clean, stratify_col="type_label", seed=args.seed
+        # Step 6: Save split7_cleaned.csv
+        split_7_cleaned = expand_and_format(df_clean, label_col="grouped_label")
+        out_7_cleaned_path = args.out_dir / "split7_cleaned.csv"
+        split_7_cleaned.to_csv(out_7_cleaned_path, index=False)
+
+        print(
+            f"Saved {out_7_cleaned_path}: {len(split_7_cleaned)} images "
+            f"across {split_7_cleaned['label'].nunique()} classes"
         )
-        df_v2["grouped_label"] = df_v2["type_label"].replace(to_new_label)
-
-        # 4. Explode images_path and format output
-        split_grouped = expand_and_format(df_v2, label_col="grouped_label")
-        out_grouped_path = args.out_dir / "split.csv"
-        split_grouped.to_csv(out_grouped_path, index=False)
-
-        print(f"Saved {out_grouped_path}: {len(split_grouped)} images across {split_grouped['label'].nunique()} classes")
-        print(split_grouped["split"].value_counts().to_string())
-
+        print(split_7_cleaned["split"].value_counts().to_string())
+        print("\n" + split_7_cleaned["label"].value_counts().to_string())
+        print("\n" + pd.crosstab(split_7_cleaned["label"], split_7_cleaned["split"]).to_string())
+        print("\n" + (pd.crosstab(split_7_cleaned["label"], split_7_cleaned["split"], normalize="index") * 100).round(2).to_string())
 
 if __name__ == "__main__":
     main()
