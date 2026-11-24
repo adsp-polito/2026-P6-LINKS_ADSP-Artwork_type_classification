@@ -85,7 +85,7 @@ def remove_other_images(df: pd.DataFrame, corrections_df: pd.DataFrame) -> pd.Da
         kept = [
             p.strip()
             for p in row["images_path"].split(";")
-            if p.strip() and p.strip() not in bad_images
+            if p.strip() and p.strip().replace("\\", "/") not in bad_images
         ]
         return ";".join(kept)
 
@@ -99,52 +99,102 @@ def remove_other_images(df: pd.DataFrame, corrections_df: pd.DataFrame) -> pd.Da
     )
     return out
 
-
 def relabel_from_predictions(
     df: pd.DataFrame,
     corrections_df: pd.DataFrame,
     label_col: str,
     valid_labels: set[str],
+    to_new_label: dict[str, str],
 ) -> pd.DataFrame:
-    """Update artefact labels when all non-'Other' predictions agree; drop conflicting artefacts."""
+    """Keep artefacts only if all remaining images have the same final label."""
+
     if corrections_df.empty:
         return df.copy()
 
-    non_other = corrections_df[corrections_df["predicted"].str.lower() != "other"].copy()
-    if non_other.empty:
-        return df.copy()
+    non_other = corrections_df[
+        corrections_df["predicted"].str.lower() != "other"
+    ].copy()
 
-    # Check agreement per artefact across all non-'Other' image records
-    pred_per_artefact = non_other.groupby("artefact")["predicted"].unique()
+    non_other["image"] = (non_other["image"].str.strip().str.replace("\\", "/", regex=False))
+
+    # Store predictions for each individual image of each artefact
+    predictions = (
+        non_other.groupby(["artefact", "image"])["predicted"]
+        .agg(set)
+        .to_dict()
+    )
 
     unanimous_map: dict[str, str] = {}
     conflicting_artefacts: set[str] = set()
 
-    for artefact_id, preds in pred_per_artefact.items():
-        if len(preds) == 1:
-            pred_label = preds[0]
-            if pred_label in valid_labels:
-                unanimous_map[artefact_id] = pred_label
-            else:
-                conflicting_artefacts.add(artefact_id)
-        else:
-            conflicting_artefacts.add(artefact_id)
-
     out = df.copy()
 
-    # Relabel unanimous artefacts directly on type_label
-    relabel_mask = out["artefact"].isin(unanimous_map)
-    out.loc[relabel_mask, label_col] = out.loc[relabel_mask, "artefact"].map(unanimous_map)
+    for row in out.itertuples(index=False):
+        artefact_id = row.artefact
+        original_label = getattr(row, label_col)
 
-    # Drop artefacts with conflicting predictions
+        final_labels = set()
+
+        # Consider ALL remaining images of the artefact
+        for path in row.images_path.split(";"):
+            path = path.strip().replace("\\", "/")
+
+            if not path:
+                continue
+
+            # Use predicted labels if available, otherwise, keep the original label
+            image_labels = predictions.get(
+                (artefact_id, path),
+                {original_label},
+            )
+
+            # Drop artefacts with invalid predictions
+            if not image_labels.issubset(valid_labels):
+                conflicting_artefacts.add(artefact_id)
+                break
+
+            # Map predictions to the final 7-class taxonomy
+            final_labels.update(
+                to_new_label.get(label, label)
+                for label in image_labels
+            )
+
+            # Drop artefacts as soon as a conflict is detected
+            if len(final_labels) > 1:
+                conflicting_artefacts.add(artefact_id)
+                break
+
+        # Keep only artefacts with unanimous final labels
+        if (
+            artefact_id not in conflicting_artefacts
+            and len(final_labels) == 1
+        ):
+            unanimous_map[artefact_id] = next(iter(final_labels))
+
+    # Drop inconsistent artefacts
     before_drop = len(out)
+
     out = out[~out["artefact"].isin(conflicting_artefacts)].copy()
+
     dropped_count = before_drop - len(out)
 
-    print(
-        f"[Info] CSV relabeling: updated {int(relabel_mask.sum())} artefacts with unanimous predictions, "
-        f"dropped {dropped_count} artefacts with conflicting/invalid predictions"
+    # Update labels only when they actually change
+    new_labels = out["artefact"].map(unanimous_map)
+
+    relabel_mask = (
+        new_labels.notna()
+        & new_labels.ne(out[label_col])
     )
+
+    out.loc[relabel_mask, label_col] = new_labels[relabel_mask]
+
+    print(
+        f"[Info] CSV relabeling: "
+        f"updated {int(relabel_mask.sum())} artefacts, "
+        f"dropped {dropped_count} artefacts "
+        f"with conflicting/invalid final image labels"
+    )
+
     return out
 
 
@@ -332,8 +382,8 @@ def main():
             corrections_df,
             label_col="grouped_label",
             valid_labels=valid_labels,
+            to_new_label=to_new_label,
         )
-        df_clean["grouped_label"] = df_clean["grouped_label"].replace(to_new_label)
 
         # Drop artefacts left with 0 images after removing 'Other'
         df_clean = df_clean[df_clean["images_path"].str.strip() != ""].copy()
