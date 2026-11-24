@@ -23,17 +23,18 @@ class CLI(LightningCLI):
         config = self.config_init[self.subcommand]
         run_folder = str(Path(config.out_dir) / config.run_name)
 
-        ckpt_args = {"dirpath": run_folder + "/checkpoints", "save_top_k": 1, "enable_version_counter": False,
-                     "save_on_train_epoch_end": True}
         callbacks = list(config.trainer.callbacks or [])
-        callbacks.append(ModelCheckpoint(filename="best", monitor="val/macro_f1", mode="max", **ckpt_args))
-        callbacks.append(ModelCheckpoint(filename="last", **ckpt_args))
+        # best.ckpt = best val macro-F1, last.ckpt = last epoch (save_last)
+        callbacks.append(ModelCheckpoint(dirpath=run_folder + "/checkpoints", filename="best", monitor="val/macro_f1",
+                                         mode="max", save_top_k=1, save_last=True, enable_version_counter=False,
+                                         save_on_train_epoch_end=True))
 
         logger = False
         if config.wandb_project:
             # same id as the run name, so resuming continues the same wandb run
+            # log_model=True: best.ckpt and last.ckpt are uploaded as artifacts at the end of fit
             logger = WandbLogger(project=config.wandb_project, entity=config.wandb_entity, name=config.run_name,
-                                 id=config.run_name, resume="allow", save_dir=run_folder)
+                                 id=config.run_name, resume="allow", save_dir=run_folder, log_model=True)
         return super().instantiate_trainer(default_root_dir=run_folder, callbacks=callbacks, logger=logger, **kwargs)
 
 
