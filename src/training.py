@@ -98,7 +98,7 @@ class ArtworkClassifier(lightning.LightningModule):
 
     def on_train_epoch_end(self):
         train_loss = torch.stack(self.train_losses).mean().item()
-        print(f"epoch {self.current_epoch + 1} | train_loss {train_loss:.4f} | "
+        print(f"epoch {self.current_epoch + 1} | train_loss {train_loss:.4f} | val_loss {self.val_metrics['loss']:.4f} | "
               f"val_macro_f1 {self.val_metrics['macro_f1']:.4f} | val_accuracy {self.val_metrics['accuracy']:.4f}")
 
     def eval_step(self, batch):
@@ -106,15 +106,20 @@ class ArtworkClassifier(lightning.LightningModule):
         self.outputs.append((self(x).float().cpu(), y.cpu()))
 
     def eval_epoch_end(self, split):
-        logits = torch.cat([o[0] for o in self.outputs]).numpy()
-        labels = torch.cat([o[1] for o in self.outputs]).numpy()
+        logits = torch.cat([o[0] for o in self.outputs])
+        labels = torch.cat([o[1] for o in self.outputs])
         self.outputs = []
 
-        metrics = compute_metrics(logits, labels, self.classes)
-        self.log(f"{split}/macro_f1", metrics["macro_f1"])
-        self.log(f"{split}/accuracy", metrics["accuracy"])
+        metrics = compute_metrics(logits.numpy(), labels.numpy(), self.classes)
+        # validate on a checkpoint logs to val_best/*, separate from the fit curves
+        key = "val_best" if split == "val" and self.trainer.state.fn != "fit" else split
+        if self.trainer.state.fn == "fit":
+            metrics["loss"] = self.criterion(logits, labels).item()
+            self.log("val/loss", metrics["loss"])
+        self.log(f"{key}/macro_f1", metrics["macro_f1"])
+        self.log(f"{key}/accuracy", metrics["accuracy"])
         for c, f1 in metrics["f1_per_class"].items():
-            self.log(f"{split}_f1/{c}", f1)
+            self.log(f"{key}_f1/{c}", f1)
 
         if self.trainer.state.fn == "fit":
             self.val_metrics = metrics
@@ -129,7 +134,7 @@ class ArtworkClassifier(lightning.LightningModule):
         plot_confusion_matrix(metrics["confusion_matrix"], self.classes, cm_path,
                               title=f"{split} | macro-F1 {metrics['macro_f1']:.3f}")
         if isinstance(self.logger, WandbLogger):
-            self.logger.log_image(key=f"{split}/confusion_matrix", images=[str(cm_path)])
+            self.logger.log_image(key=f"{key}/confusion_matrix", images=[str(cm_path)])
         print(f"[{split}] macro-F1 {metrics['macro_f1']:.4f} | acc {metrics['accuracy']:.4f}")
         for c in self.classes:
             print(f"    {c:<20} F1 {metrics['f1_per_class'][c]:.4f}  (n={metrics['support'][c]})")
