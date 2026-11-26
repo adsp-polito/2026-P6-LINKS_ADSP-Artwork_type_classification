@@ -1,0 +1,24 @@
+seed_everything: 42
+run_name: swinv2b_head_7classes_cleaned_256
+out_dir: runs
+wandb_project: artwork-type-classification
+wandb_entity: ADSP-project
+
+trainer:
+  max_epochs: 20
+  accelerator: gpu
+  devices: 1
+  precision: 16-mixed
+
+model:
+  model_name: swinv2_base_window12to16_192to256.ms_in22k_ft_in1k
+  pretrained: true
+  freeze_backbone: true  # head only
+  lr_head: 1.0e-3
+data:
+  splits: data/split7_cleaned.csv
+  data_root: /kaggle/input/datasets/fabiostradiotti/artkb-dataset
+  img_size: 256
+  batch_size: 64
+  cache_features: true  # backbone features extracted once, then only the head is trained
+  features_dir: features/swinv2b_head_7classes_cleaned_256
