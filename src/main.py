@@ -19,6 +19,11 @@ class CLI(LightningCLI):
         parser.link_arguments("data.img_size", "model.img_size")
         parser.link_arguments("data.classes", "model.classes", apply_on="instantiate")
 
+    def before_instantiate_classes(self):
+        #check that exists checkpoint path for validate/test
+        if self.subcommand in ("validate", "test") and not self.config[self.subcommand].ckpt_path:
+            raise ValueError(f"{self.subcommand} needs --ckpt_path to load the trained model")
+
     def instantiate_trainer(self, **kwargs):
         config = self.config_init[self.subcommand]
         run_folder = str(Path(config.out_dir) / config.run_name)

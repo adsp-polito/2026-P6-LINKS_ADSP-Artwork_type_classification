@@ -135,6 +135,8 @@ class ArtworkClassifier(lightning.LightningModule):
                               title=f"{split} | macro-F1 {metrics['macro_f1']:.3f}")
         if isinstance(self.logger, WandbLogger):
             self.logger.log_image(key=f"{key}/confusion_matrix", images=[str(cm_path)])
+            # json in the Files tab of the run; a later validate/test replaces it
+            self.logger.experiment.save(str(out), base_path=str(out.parent), policy="now")
         print(f"[{split}] macro-F1 {metrics['macro_f1']:.4f} | acc {metrics['accuracy']:.4f}")
         for c in self.classes:
             print(f"    {c:<20} F1 {metrics['f1_per_class'][c]:.4f}  (n={metrics['support'][c]})")
