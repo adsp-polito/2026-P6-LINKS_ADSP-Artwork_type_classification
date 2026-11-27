@@ -13,15 +13,14 @@ from src.models import build_network
 
 
 # Shared oversampling policy for all seven-class experiments.
-# Unlisted labels have a repetition factor of 1.
 OVERSAMPLING_FACTORS = {
     "Painting": 1,
     "Buildings": 1,
-    "Documents": 3,
-    "Clothing": 3,
-    "Instruments": 4,
-    "Medals": 4,
-    "Mosaics": 5,
+    "Documents": 5,
+    "Clothing": 6,
+    "Instruments": 6,
+    "Medals": 7,
+    "Mosaics": 10,
 }
 
 
