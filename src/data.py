@@ -25,9 +25,11 @@ OVERSAMPLING_FACTORS = {
 }
 
 
-def build_transform(img_size, mean, std):
+def build_transform(img_size, mean, std, augmentation=False):
+    # build_augmentation already includes the Resize step
+    base = build_augmentation(img_size) if augmentation else transforms.Resize((img_size, img_size))
     return transforms.Compose([
-        transforms.Resize((img_size, img_size)),
+        base,
         transforms.ToTensor(),
         transforms.Normalize(mean, std),
     ])
@@ -113,11 +115,7 @@ class ArtworkDataModule(lightning.LightningDataModule):
 
         cfg = timm.get_pretrained_cfg(model_name)
         self.transform = build_transform(img_size, cfg.mean, cfg.std)
-        self.train_transform = self.transform if not augmentation else transforms.Compose([
-            build_augmentation(img_size),
-            transforms.ToTensor(),
-            transforms.Normalize(cfg.mean, cfg.std),
-        ])
+        self.train_transform = build_transform(img_size, cfg.mean, cfg.std, augmentation)
 
     def setup(self, stage):
         if self.cache_features and self.features is None:
