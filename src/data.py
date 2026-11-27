@@ -8,7 +8,21 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset, TensorDataset
 from torchvision import transforms
 
+from src.augmentation import build_augmentation
 from src.models import build_network
+
+
+# Shared oversampling policy for all seven-class experiments.
+# Unlisted labels have a repetition factor of 1.
+OVERSAMPLING_FACTORS = {
+    "Painting": 1,
+    "Buildings": 1,
+    "Documents": 3,
+    "Clothing": 3,
+    "Instruments": 4,
+    "Medals": 4,
+    "Mosaics": 5,
+}
 
 
 def build_transform(img_size, mean, std):
@@ -17,6 +31,20 @@ def build_transform(img_size, mean, std):
         transforms.ToTensor(),
         transforms.Normalize(mean, std),
     ])
+
+
+def oversample_train(rows, factors, label_col="label"):
+    """Repeat each training row exactly factor[label] times (default: 1)."""
+    factors = factors or {}
+    unknown = set(factors) - set(rows[label_col].unique())
+    if unknown:
+        raise ValueError(f"Oversampling labels not in training set: {sorted(unknown)}")
+    for label, factor in factors.items():
+        if isinstance(factor, bool) or not isinstance(factor, int) or factor < 1:
+            raise ValueError(f"Oversampling factor for {label} must be an integer >= 1")
+    repetitions = rows[label_col].map(lambda label: factors.get(label, 1))
+    rows = rows.reset_index(drop=True)
+    return rows.loc[rows.index.repeat(repetitions.to_numpy())].reset_index(drop=True)
 
 
 class ImageDataset(Dataset):
@@ -50,6 +78,8 @@ class ArtworkDataModule(lightning.LightningDataModule):
         split_col: str = "split",
         cache_features: bool = False,
         features_dir: str = "features",
+        augmentation: bool = False,
+        oversampling: bool = False,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
@@ -61,6 +91,8 @@ class ArtworkDataModule(lightning.LightningDataModule):
         self.cache_features = cache_features
         self.features_dir = Path(features_dir)
         self.features = None
+        if self.cache_features and augmentation:
+            raise ValueError("Online augmentation requires data.cache_features: false")
 
         df = pd.read_csv(splits)
         self.classes = sorted(df[label_col].unique())
@@ -69,11 +101,23 @@ class ArtworkDataModule(lightning.LightningDataModule):
         self.paths, self.labels = {}, {}
         for split in ["train", "val", "test"]:
             rows = df[df[split_col] == split]
+            if split == "train" and oversampling:
+                before = rows[label_col].value_counts().sort_index()
+                rows = oversample_train(rows, OVERSAMPLING_FACTORS, label_col)
+                after = rows[label_col].value_counts().sort_index()
+                print("Training rows before/after oversampling:")
+                print(pd.DataFrame({"before": before, "after": after}).to_string())
+                print(f"Total: {before.sum()} -> {after.sum()}")
             self.paths[split] = rows[path_col].tolist()
             self.labels[split] = rows[label_col].map(class_id).tolist()
 
         cfg = timm.get_pretrained_cfg(model_name)
         self.transform = build_transform(img_size, cfg.mean, cfg.std)
+        self.train_transform = self.transform if not augmentation else transforms.Compose([
+            build_augmentation(img_size),
+            transforms.ToTensor(),
+            transforms.Normalize(cfg.mean, cfg.std),
+        ])
 
     def setup(self, stage):
         if self.cache_features and self.features is None:
@@ -112,7 +156,8 @@ class ArtworkDataModule(lightning.LightningDataModule):
             dataset = TensorDataset(self.features[split], torch.tensor(self.labels[split]))
             workers = 0  # already in memory
         else:
-            dataset = ImageDataset(self.data_root, self.paths[split], self.labels[split], self.transform)
+            transform = self.train_transform if train else self.transform
+            dataset = ImageDataset(self.data_root, self.paths[split], self.labels[split], transform)
             workers = self.num_workers
         return DataLoader(dataset, batch_size=self.batch_size, shuffle=train, drop_last=train,
                           num_workers=workers, pin_memory=True, persistent_workers=workers > 0)
