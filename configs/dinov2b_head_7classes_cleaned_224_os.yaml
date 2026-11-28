@@ -1,0 +1,26 @@
+seed_everything: 42
+run_name: dinov2b_head_7classes_cleaned_224_os
+out_dir: runs
+wandb_project: artwork-type-classification
+wandb_entity: ADSP-project
+
+trainer:
+  max_epochs: 20
+  accelerator: gpu
+  devices: 1
+  precision: 16-mixed
+
+model:
+  model_name: vit_base_patch14_reg4_dinov2.lvd142m
+  pretrained: true
+  freeze_backbone: true  # head only
+  lr_head: 1.0e-3
+data:
+  splits: data/split7_cleaned.csv
+  data_root: /kaggle/input/datasets/fabiostradiotti/artkb-dataset
+  img_size: 224
+  batch_size: 64
+  cache_features: true
+  features_dir: features/dinov2b_head_7classes_cleaned_224_os
+  augmentation: false
+  oversampling: true
